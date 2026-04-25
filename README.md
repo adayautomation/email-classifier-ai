@@ -65,7 +65,7 @@ Is it URGENT?
 ![Telegram Alert](assets/telegram.png)
 
 ### Automatic email reply sent to patient
-<img src="assets/reply.jpg" width="400"/>
+<img src="assets/reply.png" width="400"/>
 
 ---
 
