@@ -1,0 +1,314 @@
+{
+  "name": "Clasificador de Emails con IA - Clínica v2",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {
+          "readStatus": "unread"
+        },
+        "options": {}
+      },
+      "id": "node-001",
+      "name": "Gmail - Leer Emails",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [200, 400],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REEMPLAZA_CON_TU_CREDENTIAL_GMAIL",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 400,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Eres un clasificador de emails para una clínica dental. Analiza el siguiente email y responde ÚNICAMENTE con un JSON válido con este formato exacto, sin texto adicional:\\n\\n{\\\"categoria\\\": \\\"URGENTE\\\", \\\"respuesta\\\": \\\"texto de respuesta al paciente\\\"}\\n\\nCategorías posibles:\\n- URGENTE: dolor, emergencia, necesita atención hoy\\n- CITA: quiere pedir hora, cancelar o preguntar sobre servicios\\n- ADMIN: proveedor, factura, tema interno\\n- SPAM: publicidad o irrelevante\\n\\nReglas para el campo respuesta:\\n- Si es URGENTE: redacta un mensaje empático diciendo que han recibido su mensaje y que le llamarán en menos de 1 hora\\n- Si es CITA: redacta un mensaje amable invitando a llamar al 922 000 000 o responder al email para concretar\\n- Si es ADMIN o SPAM: pon null\\n\\nEl tono debe ser profesional y cercano, en español. Firma como 'Clínica Dental Demo - Atención al Paciente'\\n\\nAsunto: {{ $json.subject }}\\nRemitente: {{ $json.from }}\\nMensaje: {{ $json.text }}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "node-002",
+      "name": "Claude - Clasificar y Redactar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [450, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZA_CON_TU_CREDENTIAL_ANTHROPIC",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst rawText = response.content[0].text.trim();\n\n// Parsear el JSON que devuelve Claude\nlet parsed;\ntry {\n  parsed = JSON.parse(rawText);\n} catch (e) {\n  // Si falla el parse, intentamos extraer la categoria manualmente\n  parsed = { categoria: 'ADMIN', respuesta: null };\n}\n\nconst categorias = ['URGENTE', 'CITA', 'ADMIN', 'SPAM'];\nlet categoria = parsed.categoria ? parsed.categoria.toUpperCase().trim() : 'ADMIN';\nif (!categorias.includes(categoria)) categoria = 'ADMIN';\n\nconst emailData = $('Gmail - Leer Emails').first().json;\n\n// Extraer email del remitente limpio\nconst fromRaw = emailData.from || '';\nconst emailMatch = fromRaw.match(/<(.+?)>/);\nconst fromEmail = emailMatch ? emailMatch[1] : fromRaw;\n\nreturn [{\n  json: {\n    categoria: categoria,\n    respuesta: parsed.respuesta || null,\n    asunto: emailData.subject || '(sin asunto)',\n    remitente: fromRaw,\n    remitenteEmail: fromEmail,\n    texto: emailData.text ? emailData.text.substring(0, 300) : '(sin texto)',\n    threadId: emailData.threadId || '',\n    messageId: emailData.id || '',\n    fecha: new Date().toLocaleString('es-ES', { timeZone: 'Atlantic/Canary' })\n  }\n}];"
+      },
+      "id": "node-003",
+      "name": "Procesar Respuesta Claude",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-urgente",
+              "leftValue": "={{ $json.categoria }}",
+              "rightValue": "URGENTE",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-004",
+      "name": "¿Es URGENTE?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [950, 400]
+    },
+    {
+      "parameters": {
+        "chatId": "REEMPLAZA_CON_TU_CHAT_ID",
+        "text": "=🚨 *EMAIL URGENTE RECIBIDO*\n\n👤 *De:* {{ $json.remitente }}\n📧 *Asunto:* {{ $json.asunto }}\n🕐 *Hora:* {{ $json.fecha }}\n\n💬 *Mensaje:*\n{{ $json.texto }}\n\n✅ _Respuesta automática enviada al paciente_",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "node-005",
+      "name": "Telegram - Alerta Urgente",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1200, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "REEMPLAZA_CON_TU_CREDENTIAL_TELEGRAM",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-tiene-respuesta",
+              "leftValue": "={{ $json.respuesta }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-006",
+      "name": "¿Tiene respuesta?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1200, 500]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.remitenteEmail }}",
+        "subject": "=Re: {{ $json.asunto }}",
+        "emailType": "text",
+        "message": "={{ $json.respuesta }}",
+        "options": {
+          "replyTo": "clinica@demo.com"
+        }
+      },
+      "id": "node-007",
+      "name": "Gmail - Respuesta Automatica",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [1450, 400],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REEMPLAZA_CON_TU_CREDENTIAL_GMAIL",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "value": "REEMPLAZA_CON_TU_SPREADSHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "value": "Emails",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Fecha": "={{ $json.fecha }}",
+            "Categoria": "={{ $json.categoria }}",
+            "Remitente": "={{ $json.remitente }}",
+            "Asunto": "={{ $json.asunto }}",
+            "Resumen": "={{ $json.texto }}",
+            "Respuesta Enviada": "={{ $json.respuesta ? 'SÍ' : 'NO' }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "node-008",
+      "name": "Google Sheets - Registrar",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1700, 400],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REEMPLAZA_CON_TU_CREDENTIAL_SHEETS",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Gmail - Leer Emails": {
+      "main": [
+        [
+          {
+            "node": "Claude - Clasificar y Redactar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude - Clasificar y Redactar": {
+      "main": [
+        [
+          {
+            "node": "Procesar Respuesta Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Procesar Respuesta Claude": {
+      "main": [
+        [
+          {
+            "node": "¿Es URGENTE?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Es URGENTE?": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Alerta Urgente",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "¿Tiene respuesta?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Alerta Urgente": {
+      "main": [
+        [
+          {
+            "node": "¿Tiene respuesta?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Tiene respuesta?": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Respuesta Automatica",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Google Sheets - Registrar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Respuesta Automatica": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - Registrar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-04-24T00:00:00.000Z",
+  "versionId": "2"
+}
